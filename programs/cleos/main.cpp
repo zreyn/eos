@@ -217,7 +217,7 @@ void add_standard_transaction_options(CLI::App* cmd, string default_permission =
 
    cmd->add_option("--max-cpu-usage-ms", tx_max_cpu_usage, localized("set an upper limit on the milliseconds of cpu usage budget, for the execution of the transaction (defaults to 0 which means no limit)"));
    cmd->add_option("--max-net-usage", tx_max_net_usage, localized("set an upper limit on the net usage budget, in bytes, for the transaction (defaults to 0 which means no limit)"));
-  
+
    cmd->add_option("--delay-sec", delaysec, localized("set the delay_sec seconds, defaults to 0s"));
 }
 
@@ -560,6 +560,17 @@ fc::variant regproducer_variant(const account_name& producer, const public_key_t
             ;
 }
 
+chain::action create_open(const string& contract, const name& owner, symbol sym, const name& ram_payer) {
+   auto open_ = fc::mutable_variant_object
+      ("owner", owner)
+      ("symbol", sym)
+      ("ram_payer", ram_payer);
+    return action {
+      tx_permission.empty() ? vector<chain::permission_level>{{ram_payer,config::active_name}} : get_account_permissions(tx_permission),
+      contract, "open", variant_to_bin( contract, N(open), open_ )
+   };
+}
+
 chain::action create_transfer(const string& contract, const name& sender, const name& recipient, asset amount, const string& memo ) {
 
    auto transfer = fc::mutable_variant_object
@@ -567,11 +578,6 @@ chain::action create_transfer(const string& contract, const name& sender, const 
       ("to", recipient)
       ("quantity", amount)
       ("memo", memo);
-
-   auto args = fc::mutable_variant_object
-      ("code", contract)
-      ("action", "transfer")
-      ("args", transfer);
 
    return action {
       tx_permission.empty() ? vector<chain::permission_level>{{sender,config::active_name}} : get_account_permissions(tx_permission),
@@ -639,11 +645,11 @@ authority parse_json_authority_or_key(const std::string& authorityJsonOrFile) {
    }
 }
 
-asset to_asset( const string& code, const string& s ) {
-   static map<eosio::chain::symbol_code, eosio::chain::symbol> cache;
+asset to_asset( account_name code, const string& s ) {
+   static map< pair<account_name, eosio::chain::symbol_code>, eosio::chain::symbol> cache;
    auto a = asset::from_string( s );
    eosio::chain::symbol_code sym = a.get_symbol().to_symbol_code();
-   auto it = cache.find( sym );
+   auto it = cache.find( make_pair(code, sym) );
    auto sym_str = a.symbol_name();
    if ( it == cache.end() ) {
       auto json = call(get_currency_stats_func, fc::mutable_variant_object("json", false)
@@ -654,7 +660,7 @@ asset to_asset( const string& code, const string& s ) {
       auto obj_it = obj.find( sym_str );
       if (obj_it != obj.end()) {
          auto result = obj_it->value().as<eosio::chain_apis::read_only::get_currency_stats_result>();
-         auto p = cache.insert(make_pair( sym, result.max_supply.get_symbol() ));
+         auto p = cache.emplace( make_pair( code, sym ), result.max_supply.get_symbol() );
          it = p.first;
       } else {
          EOS_THROW(symbol_type_exception, "Symbol ${s} is not supported by token contract ${c}", ("s", sym_str)("c", code));
@@ -672,7 +678,7 @@ asset to_asset( const string& code, const string& s ) {
 }
 
 inline asset to_asset( const string& s ) {
-   return to_asset( "eosio.token", s );
+   return to_asset( N(eosio.token), s );
 }
 
 struct set_account_permission_subcommand {
@@ -789,7 +795,7 @@ void try_local_port( const string& lo_address, uint16_t port, uint32_t duration 
 }
 
 void ensure_keosd_running(CLI::App* app) {
-    if (!no_auto_keosd)
+    if (no_auto_keosd)
         return;
     // get, version, net do not require keosd
     if (tx_skip_sign || app->got_subcommand("get") || app->got_subcommand("version") || app->got_subcommand("net"))
@@ -1361,7 +1367,7 @@ struct buyram_subcommand {
                   ("payer", from_str)
                   ("receiver", receiver_str)
                   ("bytes", fc::to_uint64(amount) * 1024ull);
-            send_actions({create_action({permission_level{from_str,config::active_name}}, config::system_account_name, N(buyrambytes), act_payload)});            
+            send_actions({create_action({permission_level{from_str,config::active_name}}, config::system_account_name, N(buyrambytes), act_payload)});
          } else {
             fc::variant act_payload = fc::mutable_variant_object()
                ("payer", from_str)
@@ -1472,6 +1478,13 @@ void get_account( const string& accountName, bool json_format ) {
    if (!json_format) {
       asset staked;
       asset unstaking;
+
+      if( res.core_liquid_balance.valid() ) {
+         unstaking = asset( 0, res.core_liquid_balance->get_symbol() ); // Correct core symbol for unstaking asset.
+         staked = asset( 0, res.core_liquid_balance->get_symbol() );    // Correct core symbol for staked asset.
+      }
+
+      std::cout << "created: " << string(res.created) << std::endl;
 
       if(res.privileged) std::cout << "privileged: true" << std::endl;
 
@@ -2007,7 +2020,7 @@ int main( int argc, char** argv ) {
    getTable->add_option( "-l,--limit", limit, localized("The maximum number of rows to return") );
    getTable->add_option( "-k,--key", table_key, localized("Deprecated") );
    getTable->add_option( "-L,--lower", lower, localized("JSON representation of lower bound value of key, defaults to first") );
-   getTable->add_option( "-U,--upper", upper, localized("JSON representation of upper bound value value of key, defaults to last") );
+   getTable->add_option( "-U,--upper", upper, localized("JSON representation of upper bound value of key, defaults to last") );
    getTable->add_option( "--index", index_position,
                          localized("Index number, 1 - primary (first), 2 - secondary index (in order defined by multi_index), 3 - third index, etc.\n"
                                    "\t\t\t\tNumber or name of index can be specified, e.g. 'secondary' or '2'."));
@@ -2033,6 +2046,23 @@ int main( int argc, char** argv ) {
                          ("encode_type", encode_type)
                          );
 
+      std::cout << fc::json::to_pretty_string(result)
+                << std::endl;
+   });
+
+   auto getScope = get->add_subcommand( "scope", localized("Retrieve a list of scopes and tables owned by a contract"), false);
+   getScope->add_option( "contract", code, localized("The contract who owns the table") )->required();
+   getScope->add_option( "-t,--table", table, localized("The name of the table as filter") );
+   getScope->add_option( "-l,--limit", limit, localized("The maximum number of rows to return") );
+   getScope->add_option( "-L,--lower", lower, localized("lower bound of scope") );
+   getScope->add_option( "-U,--upper", upper, localized("upper bound of scope") );
+   getScope->set_callback([&] {
+      auto result = call(get_table_by_scope_func, fc::mutable_variant_object("code",code)
+                         ("table",table)
+                         ("lower_bound",lower)
+                         ("upper_bound",upper)
+                         ("limit",limit)
+                         );
       std::cout << fc::json::to_pretty_string(result)
                 << std::endl;
    });
@@ -2103,12 +2133,7 @@ int main( int argc, char** argv ) {
    getTransaction->add_option("id", transaction_id_str, localized("ID of the transaction to retrieve"))->required();
    getTransaction->add_option( "-b,--block-hint", block_num_hint, localized("the block number this transaction may be in") );
    getTransaction->set_callback([&] {
-      transaction_id_type transaction_id;
-      try {
-         while( transaction_id_str.size() < 64 ) transaction_id_str += "0";
-         transaction_id = transaction_id_type(transaction_id_str);
-      } EOS_RETHROW_EXCEPTIONS(transaction_id_type_exception, "Invalid transaction ID: ${transaction_id}", ("transaction_id", transaction_id_str))
-      auto arg= fc::mutable_variant_object( "id", transaction_id);
+      auto arg= fc::mutable_variant_object( "id", transaction_id_str);
       if ( block_num_hint > 0 ) {
          arg = arg("block_num_hint", block_num_hint);
       }
@@ -2211,7 +2236,7 @@ int main( int argc, char** argv ) {
 
    auto getSchedule = get_schedule_subcommand{get};
    auto getTransactionId = get_transaction_id_subcommand{get};
-   
+
    /*
    auto getTransactions = get->add_subcommand("transactions", localized("Retrieve all transactions with specific account name referenced in their scope"), false);
    getTransactions->add_option("account_name", account_name, localized("name of account to query on"))->required();
@@ -2395,12 +2420,14 @@ int main( int argc, char** argv ) {
    string recipient;
    string amount;
    string memo;
+   bool pay_ram = false;
    auto transfer = app.add_subcommand("transfer", localized("Transfer EOS from account to account"), false);
    transfer->add_option("sender", sender, localized("The account sending EOS"))->required();
    transfer->add_option("recipient", recipient, localized("The account receiving EOS"))->required();
    transfer->add_option("amount", amount, localized("The amount of EOS to send"))->required();
    transfer->add_option("memo", memo, localized("The memo for the transfer"));
    transfer->add_option("--contract,-c", con, localized("The contract which controls the token"));
+   transfer->add_flag("--pay-ram-to-open", pay_ram, localized("Pay ram to open recipient's token balance row"));
 
    add_standard_transaction_options(transfer, "sender@active");
    transfer->set_callback([&] {
@@ -2410,7 +2437,14 @@ int main( int argc, char** argv ) {
          tx_force_unique = false;
       }
 
-      send_actions({create_transfer(con, sender, recipient, to_asset(con, amount), memo)});
+      auto transfer_amount = to_asset(con, amount);
+      auto transfer = create_transfer(con, sender, recipient, transfer_amount, memo);
+      if (!pay_ram) {
+         send_actions( { transfer });
+      } else {
+         auto open_ = create_open(con, recipient, transfer_amount.get_symbol(), sender);
+         send_actions( { open_, transfer } );
+      }
    });
 
    // Net subcommand
