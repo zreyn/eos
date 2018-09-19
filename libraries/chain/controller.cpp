@@ -336,6 +336,7 @@ struct controller_impl {
             wlog( " Initializing new blockchain with genesis state                  " );
             blog.reset_to_genesis( conf.genesis, std::make_shared<signed_block>(head->header) );
             db.set_revision( head->block_num );
+            fork_db.reset( *head );
          }
       }
 
