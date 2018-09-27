@@ -231,7 +231,7 @@ struct controller_impl {
 
       auto fork_head = fork_db.head();
 
-      if( fork_head->dpos_irreversible_blocknum == log_head->block_num() )
+      if( fork_head->dpos_irreversible_blocknum <= log_head->block_num() )
          return;
 
       auto libitr = rbi.find( fork_head->dpos_irreversible_blocknum );
