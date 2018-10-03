@@ -275,13 +275,13 @@ class WalletMgr(object):
         Utils.Print("=================================================================")
         if self.__walletPid is not None:
             Utils.Print("Contents of %s:" % (WalletMgr.__walletLogOutFile))
-            Utils.Print("=================================================================")
             with open(WalletMgr.__walletLogOutFile, "r") as f:
                 shutil.copyfileobj(f, sys.stdout)
-            Utils.Print("Contents of %s:" % (WalletMgr.__walletLogErrFile))
             Utils.Print("=================================================================")
+            Utils.Print("Contents of %s:" % (WalletMgr.__walletLogErrFile))
             with open(WalletMgr.__walletLogErrFile, "r") as f:
                 shutil.copyfileobj(f, sys.stdout)
+            Utils.Print("=================================================================")
 
     def killall(self, allInstances=False):
         """Kill keos instances. allInstances will kill all keos instances running on the system."""
