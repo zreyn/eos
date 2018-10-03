@@ -835,7 +835,7 @@ class Cluster(object):
         cmd="bash bios_boot.sh"
         if Utils.Debug: Utils.Print("cmd: %s" % (cmd))
         if 0 != subprocess.call(cmd.split(), stdout=Utils.FNull):
-            if not silent: Utils.Print("Launcher failed to shut down eos cluster.")
+            if not silent: Utils.Print("Launcher failed to boot eos cluster.")
             return None
 
         p = re.compile('error', re.IGNORECASE)
