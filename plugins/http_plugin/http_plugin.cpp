@@ -432,10 +432,13 @@ namespace eosio {
          }
 
          if( options.count( my->unix_socket_path_option_name ) && !options.at( my->unix_socket_path_option_name ).as<string>().empty()) {
+            ilog("Get sock_path");
             boost::filesystem::path sock_path = options.at(my->unix_socket_path_option_name).as<string>();
             if (sock_path.is_relative())
                sock_path = app().data_dir() / sock_path;
+            ilog("sock_path=${sp}",("sp", sock_path.string()));
             my->unix_endpoint = asio::local::stream_protocol::endpoint(sock_path.string());
+            ilog("sock_path set");
          }
 
          if( options.count( my->https_server_address_option_name ) && options.at( my->https_server_address_option_name ).as<string>().length()) {
