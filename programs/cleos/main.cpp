@@ -829,6 +829,8 @@ void ensure_keosd_running(CLI::App* app) {
         pargs.push_back("");
         pargs.push_back("--https-server-address");
         pargs.push_back("");
+        pargs.push_back("--unix-socket-path");
+        pargs.push_back(string(key_store_executable_name) + ".sock");
 
         ::boost::process::child keos(binPath, pargs,
                                      bp::std_in.close(),
@@ -1299,12 +1301,16 @@ struct bidname_info_subcommand {
             return;
          }
          for ( auto& row : result.rows ) {
-            fc::time_point time(fc::microseconds(row["last_bid_time"].as_uint64()));
+            string time = row["last_bid_time"].as_string();
+            try {
+                time = (string)fc::time_point(fc::microseconds(to_uint64(time)));
+            } catch (fc::parse_error_exception&) {
+            }
             int64_t bid = row["high_bid"].as_int64();
             std::cout << std::left << std::setw(18) << "bidname:" << std::right << std::setw(24) << row["newname"].as_string() << "\n"
                       << std::left << std::setw(18) << "highest bidder:" << std::right << std::setw(24) << row["high_bidder"].as_string() << "\n"
                       << std::left << std::setw(18) << "highest bid:" << std::right << std::setw(24) << (bid > 0 ? bid : -bid) << "\n"
-                      << std::left << std::setw(18) << "last bid time:" << std::right << std::setw(24) << ((std::string)time).c_str() << std::endl;
+                      << std::left << std::setw(18) << "last bid time:" << std::right << std::setw(24) << time << std::endl;
             if (bid < 0) std::cout << "This auction has already closed" << std::endl;
          }
       });
@@ -1466,10 +1472,16 @@ struct canceldelay_subcommand {
    }
 };
 
-void get_account( const string& accountName, bool json_format ) {
-   auto json = call(get_account_func, fc::mutable_variant_object("account_name", accountName));
-   auto res = json.as<eosio::chain_apis::read_only::get_account_results>();
+void get_account( const string& accountName, const string& coresym, bool json_format ) {
+   fc::variant json;
+   if (coresym.empty()) {
+      json = call(get_account_func, fc::mutable_variant_object("account_name", accountName));
+   }
+   else {
+      json = call(get_account_func, fc::mutable_variant_object("account_name", accountName)("expected_core_symbol", symbol::from_string(coresym)));
+   }
 
+   auto res = json.as<eosio::chain_apis::read_only::get_account_results>();
    if (!json_format) {
       asset staked;
       asset unstaking;
@@ -1912,11 +1924,13 @@ int main( int argc, char** argv ) {
 
    // get account
    string accountName;
+   string coresym;
    bool print_json;
    auto getAccount = get->add_subcommand("account", localized("Retrieve an account from the blockchain"), false);
    getAccount->add_option("name", accountName, localized("The name of the account to retrieve"))->required();
+   getAccount->add_option("core-symbol", coresym, localized("The expected core symbol of the chain you are querying"));
    getAccount->add_flag("--json,-j", print_json, localized("Output in JSON format") );
-   getAccount->set_callback([&]() { get_account(accountName, print_json); });
+   getAccount->set_callback([&]() { get_account(accountName, coresym, print_json); });
 
    // get code
    string codeFilename;
